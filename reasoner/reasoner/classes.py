@@ -1,19 +1,20 @@
 
-import rclpy, zmq, ast, re
+import rclpy, zmq, ast, re, json
 import numpy as np
 
-from tiago_merger.msg import DeiticSolution, HRICommand, GDRNSolution
+from reasoner.msg import DeicticSolution, HRICommand, GDRNSolution, GDRNObject
+from std_msgs.msg import Header
 from rclpy.node import Node
 from threading import Lock
 
 # TODO change these topics according to inputs processing modules
-DEITIC_TOPIC = '/deitic_solution'
-LANGUAGE_TOPIC = '/language_output'
-GDRNET_TOPIC = '/gdrnet_output'
+DEICTIC_TOPIC = '/reasoner/input/gesture'
+LANGUAGE_TOPIC = '/reasoner/input/nlp'
+GDRNET_TOPIC = '/reasoner/input/gdrnet'
 
 class PointingInput():
   """
-  Class for getting DeiticSolution input
+  Class for getting DeicticSolution input
   """
   def __init__(self, node: Node):
     # Storing node reference and class variables
@@ -30,8 +31,8 @@ class PointingInput():
     
     # Creating subcription using parent node
     self.sub = self.node.create_subscription(
-      DeiticSolution,
-      DEITIC_TOPIC,
+      DeicticSolution,
+      DEICTIC_TOPIC,
       self.pointing_callback,
       10
     )
@@ -192,5 +193,105 @@ class GDRNetInput():
       )
 
     return object_color
+
+class ReasonerTester():
+  """
+  Class for testing Reasoner (merger_node)
+  """
+  def __init__(self, node: Node, test: str):
+    self.node = node
+    self.test = test
+    self.rate
+
+    # Create test publishers
+    self.deictic = self.node.create_publisher(DeicticSolution, DEICTIC_TOPIC, 10)
+    self.gdrn = self.node.create_publisher(GDRNSolution, GDRNET_TOPIC, 10)
+    self.nlp = self.node.create_publisher(HRICommand, LANGUAGE_TOPIC, 10)
+
+    # Dummy (testing) data, tm ~ test message
+    self.tm_gdrn = self.get_gdrn_output()
+    self.tm_deictic = self.get_deictic_output()
+    self.tm_nlp = self.get_nlp_output()
+
+    # Create timer for publishing
+    self.timer = self.node.create_timer(5.0, self.publish)
+
+  def publish(self):
+    self.deictic.publish(self.tm_deictic)
+    self.gdrn.publish(self.tm_gdrn)
+    self.nlp.publish(self.tm_nlp)
+
+  def get_deictic_output(self, idx=0):
+    def calculate_distances(target: dict,gdrn: list):
+      distances = []
+      t_pos = np.array(target["position"])
+      for obj in gdrn:
+        if target != obj:
+          pos = np.array(obj["position"])
+          distances.append(np.linalog.norm(pos - t_pos))
+      return distances
+
+    deictic = DeicticSolution()
+    deictic.object_id = idx
+    deictic.object_name = self.tm_gdrn[idx]["name"]
+    deictic.names = [self.tm_gdrn[i]["name"] for i in range(self.tm_gdrn)]
+    deictic.distances_from_line = calculate_distances(self.tm_gdrn[idx])
+    deictic.target_position = self.tm_gdrn[idx]["position"]
+    deictic.line_point_1 = [
+      deictic.target_position[0] + 0.1,
+      deictic.target_position[1],
+      deictic.target_position[2] + 0.2
+    ]
+    deictic.line_point_2 = [
+      deictic.target_position[0] + 0.2,
+      deictic.target_position[1],
+      deictic.target_position[2] + 0.4
+    ]
+
+  def get_gdrn_output(self):
+    # currently gdrn from zmq
+    self.context = zmq.Context()
+    self.socket = self.context.socket(zmq.SUB)
+    self.socket.connect("tcp://*:5557")
+    self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
+
+    received = False
+    gdrn = []
+    while not received or KeyboardInterrupt:
+      try:
+        msg_str = self.socket.recv_string()
+        msg_data = json.loads(msg_str)
+        if type(msg_data) == list:
+          for obj in msg_data:
+            if type(msg_data) == dict:
+              received = True
+              gdrn.append(obj)
+            else:
+              self.node.get_logger().warn(
+                "[Tester] object in msg_data is not dict"
+                )
+        else:
+          self.node.get_logger().error("[Tester] Received msg_str is not list")
+      except:      
+        self.node.get_logger().error(
+          "[Tester] Error in receiving msg from gdrn ROS1"
+          )
+    return gdrn
+
+  def get_nlp_output(self):
+    nlp = HRICommand()
+    a_param = self.test if self.test in ["left", "right","color", "shape"] else "color"
+    test_dict = {
+      "action": ["pick"],
+      "objects": ["null"],
+      "action_parameters": [a_param],
+      "object_parameters": []
+    }
+    nlp.header = Header()
+    nlp.header.stamp = self.get_clock().now().to_msg()
+    nlp.header.frame_id = "zmq_publisher"
+    nlp.data = json.dumps(test_dict)
+
+    return nlp
 
 

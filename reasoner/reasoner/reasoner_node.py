@@ -3,7 +3,7 @@
 import rclpy, zmq, re, json
 import numpy as np
 
-from reasoner.msg import DeiticSolution, HRICommand, GDRNSolution
+from reasoner.msg import DeicticSolution, HRICommand, GDRNSolution
 from std_msgs.msg import Header
 from classes import PointingInput, LanguageInput, GDRNetInput, ReasonerTester
 from rclpy.node import Node
@@ -348,3 +348,4 @@ if __name__ == '__main__':
   finally:
     merger_node.destroy_node()
     rclpy.shutdown()
+    
