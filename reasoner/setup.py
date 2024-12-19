@@ -1,21 +1,16 @@
+# reasoner/setup.py
 from setuptools import setup
-from setuptools import find_packages
 
 package_name = 'reasoner'
 
 setup(
     name=package_name,
-    version='1.0.0',
-    packages=[package_name],
+    version='0.0.1',
+    packages=['reasoner'],
     data_files=[
-        ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
+        ('share/ament_index/resource_index/packages',
+            ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/msg', [
-            'msg/DeicticSolution.msg',
-            'msg/GDRNObject.msg',
-            'msg/GDRNSolution.msg',
-            'msg/HRICommand.msg'
-        ]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -26,7 +21,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'reasoner_node = reasoner.reasoner_node'
+            'reasoner_node = reasoner.reasoner_node:main',
         ],
     },
 )
