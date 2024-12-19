@@ -1,12 +1,11 @@
-# reasoner/setup.py
-from setuptools import setup
+from setuptools import find_packages, setup
 
 package_name = 'reasoner'
 
 setup(
     name=package_name,
-    version='0.0.1',
-    packages=['reasoner'],
+    version='0.0.0',
+    packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -16,12 +15,12 @@ setup(
     zip_safe=True,
     maintainer='Simon Dratva',
     maintainer_email='dratvsim@fel.cvut.cz',
-    description='',
-    license='Apache 2.0',
+    description='TODO: Package description',
+    license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'reasoner_node = reasoner.reasoner_node:main',
+            'reasoner_node = reasoner.reasoner_node:main'
         ],
     },
 )

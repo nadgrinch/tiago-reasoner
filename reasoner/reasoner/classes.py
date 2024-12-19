@@ -2,8 +2,10 @@
 import rclpy, zmq, ast, re, json
 import numpy as np
 
-from reasoner.msg import DeicticSolution, HRICommand, GDRNSolution, GDRNObject
+from gesture_msgs.msg import DeicticSolution, HRICommand
+from scene_msgs.msg import GDRNSolution, GDRNObject
 from std_msgs.msg import Header
+from geometry_msgs.msg import Point
 from rclpy.node import Node
 from threading import Lock
 
@@ -21,6 +23,7 @@ class PointingInput():
     self.node = node
     self._lock = Lock()
     
+    # ?? do I use it TODO
     self.object_id = None
     self.object_name = None
     self.names = None
@@ -38,13 +41,13 @@ class PointingInput():
     )
   
   def pointing_callback(self, msg):
-    self.node.get_logger().info('[PointInput] Received DeiticSolution')
     self._lock.acquire()
-    self.msg = msg 
-    self._lock.release()    
+    self.msg = msg
+    self._lock.release()
+    self.node.get_logger().info("Received DeiticSolution")
   
   def get_solution(self):
-    self._lock.release()
+    self._lock.acquire()
     solution = self.msg
     self._lock.release()
     
@@ -75,6 +78,7 @@ class LanguageInput():
   def __init__(self, node: Node):
     # Storing node reference and class variables
     self.node = node
+    self.data = None
     
     # Creating subcription using parent node
     self.sub = self.node.create_subscription(
@@ -85,34 +89,10 @@ class LanguageInput():
     )
   
   def language_callback(self, msg):
-    self.node.get_logger().info('[NLPInput] Received HRICommand (string)')
-    self.data = self.parse_msg(msg.data)
-  
-  def parse_msg(self, data):
-    """
-    String parser for callback function
-    """
-
-    # Remove whitespaces around colons and commas for more robust parsing
-    cleaned_string = re.sub(r'\s*:\s*', ':', re.sub(r'\s*,\s*', ',', data))
+    self.data = json.loads(msg.data[0])
+    self.node.get_logger().info('Received HRICommand from NLP')
     
-    # Extract components
-    action_match = re.search(r'action:([^,]+)', cleaned_string)
-    objects_match = re.search(r'objects:\[([^\]]+)\]', cleaned_string)
-    action_param_match = re.search(r'action_param:([^,]+)', cleaned_string)
-    object_param_match = re.search(r'object_param:\[([^\]]+)\]', cleaned_string)
-    
-    # Parse components
-    result = {
-        "action": action_match.group(1) if action_match else None,
-        "object": ast.literal_eval(f"[{objects_match.group(1)}]") if objects_match else [],
-        "action_param": action_param_match.group(1) if action_param_match else None,
-        "object_param": ast.literal_eval(f"[{object_param_match.group(1)}]") if object_param_match else []
-    }
-    
-    return result
-    
-    
+        
 class GDRNetInput():
   """
   Class for getting GDRNet++ input
@@ -131,20 +111,18 @@ class GDRNetInput():
     )
   
   def gdrnet_callback(self, msg):
-    self.node.get_logger().info("[GDRNetInput] Received GDRNSolution")
-    self.objects = []
-    
     self._lock.acquire()
+    self.objects = []
     for msg_obj in msg.objects:
       obj = dict()
       obj["name"] = msg_obj.name
       obj["confidence"] = msg_obj.confidence
       obj["position"] = msg_obj.position
       obj["orientation"] = msg_obj.orientation
-      obj["color"] = self.get_object_color(obj)
+      obj["color"] = self.get_object_color(obj["name"])
       self.objects.append(obj)
-    
     self._lock.release()
+    self.node.get_logger().info("Received GDRNSolution")
   
   def get_objects(self):
     self._lock.acquire()
@@ -194,6 +172,7 @@ class GDRNetInput():
 
     return object_color
 
+
 class ReasonerTester():
   """
   Class for testing Reasoner (merger_node)
@@ -201,81 +180,102 @@ class ReasonerTester():
   def __init__(self, node: Node, test: str):
     self.node = node
     self.test = test
-    self.rate
 
     # Create test publishers
-    self.deictic = self.node.create_publisher(DeicticSolution, DEICTIC_TOPIC, 10)
-    self.gdrn = self.node.create_publisher(GDRNSolution, GDRNET_TOPIC, 10)
-    self.nlp = self.node.create_publisher(HRICommand, LANGUAGE_TOPIC, 10)
+    self.pub_d = self.node.create_publisher(DeicticSolution, DEICTIC_TOPIC, 10)
+    self.pub_g = self.node.create_publisher(GDRNSolution, GDRNET_TOPIC, 10)
+    self.pub_n = self.node.create_publisher(HRICommand, LANGUAGE_TOPIC, 10)
 
     # Dummy (testing) data, tm ~ test message
+    # self.tm_gdrn = self.get_gdrn_output()
+    # self.tm_deictic = self.get_deictic_output()
+    # self.tm_nlp = self.get_nlp_output()
+    
+    self.node.get_logger().info("ReasonerTester initialized")
+    # self.node.get_logger().info(
+    #   f"{self.tm_gdrn.objects[0].name}, {self.tm_deictic.object_name}, \n{self.tm_nlp.data}")
+    
+    self.timer = self.node.create_timer(5.0, self.callback)
+
+
+  def callback(self):
     self.tm_gdrn = self.get_gdrn_output()
     self.tm_deictic = self.get_deictic_output()
     self.tm_nlp = self.get_nlp_output()
 
-    # Create timer for publishing
-    self.timer = self.node.create_timer(5.0, self.publish)
-
-  def publish(self):
-    self.deictic.publish(self.tm_deictic)
-    self.gdrn.publish(self.tm_gdrn)
-    self.nlp.publish(self.tm_nlp)
+    self.node.get_logger().info("Publishing testing data to topics")
+    self.pub_d.publish(self.tm_deictic)
+    self.pub_g.publish(self.tm_gdrn)
+    self.pub_n.publish(self.tm_nlp)
 
   def get_deictic_output(self, idx=0):
-    def calculate_distances(target: dict,gdrn: list):
+    def calculate_distances(target: GDRNObject,gdrn: GDRNSolution):
       distances = []
-      t_pos = np.array(target["position"])
-      for obj in gdrn:
+      t_pos = np.array(target.position)
+      for obj in gdrn.objects:
         if target != obj:
-          pos = np.array(obj["position"])
-          distances.append(np.linalog.norm(pos - t_pos))
+          pos = np.array(obj.position)
+          distances.append(float(np.linalg.norm(pos - t_pos)))
+        else:
+          distances.append(0.0)
       return distances
 
     deictic = DeicticSolution()
     deictic.object_id = idx
-    deictic.object_name = self.tm_gdrn[idx]["name"]
-    deictic.names = [self.tm_gdrn[i]["name"] for i in range(self.tm_gdrn)]
-    deictic.distances_from_line = calculate_distances(self.tm_gdrn[idx])
-    deictic.target_position = self.tm_gdrn[idx]["position"]
-    deictic.line_point_1 = [
-      deictic.target_position[0] + 0.1,
-      deictic.target_position[1],
-      deictic.target_position[2] + 0.2
-    ]
-    deictic.line_point_2 = [
-      deictic.target_position[0] + 0.2,
-      deictic.target_position[1],
-      deictic.target_position[2] + 0.4
-    ]
+    deictic.object_name = self.tm_gdrn.objects[idx].name
+    deictic.object_names = [self.tm_gdrn.objects[i].name for i in range(len(self.tm_gdrn.objects))]
+    deictic.distances_from_line = calculate_distances(self.tm_gdrn.objects[idx], self.tm_gdrn)
+    
+    deictic.target_object_position = Point()
+    deictic.target_object_position.x = float(self.tm_gdrn.objects[idx].position[0])
+    deictic.target_object_position.y = float(self.tm_gdrn.objects[idx].position[1])
+    deictic.target_object_position.z = float(self.tm_gdrn.objects[idx].position[2])
+    
+    deictic.line_point_1 = Point()
+    deictic.line_point_1.x = float(deictic.target_object_position.x + 0.1)
+    deictic.line_point_1.y = float(deictic.target_object_position.y)
+    deictic.line_point_1.z = float(deictic.target_object_position.z + 0.2)
+
+    deictic.line_point_2 = Point()
+    deictic.line_point_2.x = float(deictic.target_object_position.x + 0.2)
+    deictic.line_point_2.y = float(deictic.target_object_position.y)
+    deictic.line_point_2.z = float(deictic.target_object_position.z + 0.4)
+
+    deictic.hand_velocity = 0.0
+    return deictic
 
   def get_gdrn_output(self):
     # currently gdrn from zmq
-    self.context = zmq.Context()
-    self.socket = self.context.socket(zmq.SUB)
-    self.socket.connect("tcp://*:5557")
+    context = zmq.Context()
+    self.socket = context.socket(zmq.SUB)
+    self.socket.connect("tcp://localhost:5557")
     self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-    received = False
-    gdrn = []
-    while not received or KeyboardInterrupt:
-      try:
-        msg_str = self.socket.recv_string()
-        msg_data = json.loads(msg_str)
-        if type(msg_data) == list:
-          for obj in msg_data:
-            if type(msg_data) == dict:
-              received = True
-              gdrn.append(obj)
-            else:
-              self.node.get_logger().warn(
-                "[Tester] object in msg_data is not dict"
-                )
-        else:
-          self.node.get_logger().error("[Tester] Received msg_str is not list")
-      except:      
-        self.node.get_logger().error(
-          "[Tester] Error in receiving msg from gdrn ROS1"
-          )
+    gdrn = GDRNSolution()
+    objects = []
+    try:
+      msg_str = self.socket.recv_string()
+      msg_data = json.loads(msg_str)
+      if type(msg_data) == list:
+        for obj in msg_data:
+          if type(obj) == dict:
+            gdrn_obj = GDRNObject()
+            gdrn_obj.name = obj["name"]
+            gdrn_obj.confidence = obj["confidence"]
+            gdrn_obj.position = obj["position"]
+            gdrn_obj.orientation = obj["orientation"]
+            objects.append(gdrn_obj)
+          else:
+            self.node.get_logger().warn(
+              f"[Tester] object in msg_data is not dict, but {type(msg_data)}"
+              )
+        gdrn.objects = objects
+      else:
+        self.node.get_logger().error("[Tester] Received msg_str is not list")
+    except:      
+      self.node.get_logger().error(
+        "[Tester] Error in receiving msg from gdrn ROS1"
+        )
     return gdrn
 
   def get_nlp_output(self):
@@ -284,13 +284,13 @@ class ReasonerTester():
     test_dict = {
       "action": ["pick"],
       "objects": ["null"],
-      "action_parameters": [a_param],
-      "object_parameters": []
+      "action_param": [a_param],
+      "object_param": []
     }
     nlp.header = Header()
-    nlp.header.stamp = self.get_clock().now().to_msg()
-    nlp.header.frame_id = "zmq_publisher"
-    nlp.data = json.dumps(test_dict)
+    nlp.header.stamp = self.node.get_clock().now().to_msg()
+    nlp.header.frame_id = "testingr"
+    nlp.data = [json.dumps(test_dict)]
 
     return nlp
 
