@@ -16,7 +16,10 @@ find_package(geometry_msgs REQUIRED)
 
 # Generate messages
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/Message.msg"  # Add all your .msg files here
+  "msg/DeicticSolution.msg"
+  "msg/GDRNObject.msg"
+  "msg/GDRNSolution.msg"
+  "msg/HRICommand.msg"
   DEPENDENCIES std_msgs geometry_msgs
 )
 
