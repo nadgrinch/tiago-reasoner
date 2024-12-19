@@ -232,14 +232,14 @@ class ReasonerTester():
     deictic.target_object_position.z = float(self.tm_gdrn.objects[idx].position[2])
     
     deictic.line_point_1 = Point()
-    deictic.line_point_1.x = float(deictic.target_object_position.x + 0.1)
+    deictic.line_point_1.x = float(deictic.target_object_position.x + 0.5)
     deictic.line_point_1.y = float(deictic.target_object_position.y)
-    deictic.line_point_1.z = float(deictic.target_object_position.z + 0.2)
+    deictic.line_point_1.z = float(deictic.target_object_position.z)
 
     deictic.line_point_2 = Point()
-    deictic.line_point_2.x = float(deictic.target_object_position.x + 0.2)
+    deictic.line_point_2.x = float(deictic.target_object_position.x + 0.8)
     deictic.line_point_2.y = float(deictic.target_object_position.y)
-    deictic.line_point_2.z = float(deictic.target_object_position.z + 0.4)
+    deictic.line_point_2.z = float(deictic.target_object_position.z)
 
     deictic.hand_velocity = 0.0
     return deictic

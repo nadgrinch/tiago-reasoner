@@ -102,29 +102,32 @@ class Reasoner(Node):
       
     return ret
 
-  def meet_ref_criteria(self, ref: dict, obj: dict, tolerance=0.1):
+  def meet_ref_criteria(self, ref: dict, obj: dict, tolerance=0.1, scale=10.0):
     # return True if given object meets filter criteria of reference
     ret = False
     ref_num = int(ref["name"][:3])
     obj_num = int(obj["name"][:3])
-
+    # TODO better color and id ==
     if (self.action_param == "color" and obj["color"] == ref["color"]):
       ret = True
     elif (self.action_param == "shape" and obj_num == ref_num):
       ret = True
     elif self.action_param in ["left", "right"]:
       dir_vector = [
-        self.deitic.line_point_1.position.x - self.deitic.line_point_2.position.x, 
-        self.deitic.line_point_1.position.y - self.deitic.line_point_2.position.y
+        scale*(self.deitic.line_point_1.x - self.deitic.line_point_2.x), 
+        scale*(self.deitic.line_point_1.y - self.deitic.line_point_2.y)
         ]
+      # print(dir_vector)
       ref_pos = ref["position"]
       obj_pos = obj["position"]
       
       ref_to_pos = [ref_pos[0] - obj_pos[0], ref_pos[1] - obj_pos[1]]
       dot_product = (
-        ref_to_pos[0] * -dir_vector[1] + 
-        ref_to_pos[1] * dir_vector[0]
+        ref_to_pos[0] * dir_vector[1] + 
+        ref_to_pos[1] * -dir_vector[0]
         )
+
+      print(f"{ref_pos},{obj_pos},{dot_product}")
       if self.action_param == "left" and dot_product < -tolerance:
         ret = True
       elif self.action_param == "right" and dot_product > tolerance:
@@ -158,7 +161,8 @@ class Reasoner(Node):
       for i in range(len(objects)):
         obj = objects[i]
         # print(obj["name"][:3], name[:3], obj["name"][:3] == name[:3])
-        if self.meet_ref_criteria(obj,ref_obj):
+        print(ref_obj["name"],obj["name"])
+        if self.meet_ref_criteria(ref_obj,obj):
           d = np.linalg.norm(
             np.array(ref_obj["position"]) - np.array(obj["position"])
             )
@@ -187,7 +191,7 @@ class Reasoner(Node):
     rows = []
     for i in range(len(self.gdrn_objects)):
       row = evaluate_reference(self.gdrn_objects,i)
-      # print(f"\n\nrow: {row}")
+      print(row)
       rows.append(list(
         dist_probs[i] * self.gdrn_objects[i]["confidence"] * np.array(row)
         ))
@@ -350,9 +354,10 @@ class Reasoner(Node):
 
 
 def main():
+  # better user interface for testing
   rclpy.init()
   merger_node = Reasoner()
-  tester = ReasonerTester(merger_node,"color")
+  tester = ReasonerTester(merger_node,"left")
   rclpy.spin(merger_node)
   merger_node.destroy_node()
   rclpy.shutdown()
