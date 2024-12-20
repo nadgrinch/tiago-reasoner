@@ -38,11 +38,9 @@ class Reasoner(Node):
         
   def main_loop(self):
     # Main processing loop
-    self.lock.acquire()
-    if self.language_sub.data == None and not self.published:
+    if self.language_sub.data == None and not self.get_published():
       self.get_logger().warn("Nothing (new) received from inputs, waiting")
       return
-    self.lock.release()
     
     self.action = self.language_sub.data["action"]
     self.action_param = self.language_sub.data["action_param"][0]
@@ -52,7 +50,7 @@ class Reasoner(Node):
     self.deitic = self.pointing_sub.get_solution()
     self.gdrn_objects = self.gdrnet_sub.get_objects()
     
-    self.get_logger().info(f"[Action parameter: {self.action_param}")
+    self.get_logger().info(f"Action parameter: {self.action_param}")
     if self.action_param in self.relations:
       # if known action param and if target objects
       if self.nlp_empty():
@@ -73,6 +71,12 @@ class Reasoner(Node):
         self.target_probs = self.eval_language()
     
     self.publish_results()
+
+  def get_published(self):
+    self.lock.acquire()
+    published = self.published
+    self.lock.release()
+    return published
 
   def get_gdrn_object_names(self):
     """
@@ -101,13 +105,12 @@ class Reasoner(Node):
       
     return ret
 
-  def meet_ref_criteria(self, ref: dict, obj: dict, tolerance=0.1):
+  def meet_ref_criteria(self, ref: dict, obj: dict, tolerance=0.01):
     # return True if given object meets filter criteria of reference
     def check_shape(ref: dict, obj: dict) -> bool:
       ref_num = int(ref["name"][:3])
       obj_num = int(obj["name"][:3])
       return ref_num == obj_num
-    ret = False
     
     def check_color(ref: dict, obj: dict) -> bool:
       ret = False
@@ -123,7 +126,7 @@ class Reasoner(Node):
             ret = True
       return ret
     
-    # TODO better color and id ==
+    ret = False
     if (self.action_param == "color" and check_color(ref,obj)):
       ret = True
     elif (self.action_param == "shape" and check_shape(ref,obj)):
@@ -132,19 +135,19 @@ class Reasoner(Node):
       dir_vector = [
         self.deitic.line_point_1.x - self.deitic.line_point_2.x, 
         self.deitic.line_point_1.y - self.deitic.line_point_2.y ]
-      # print(dir_vector)
+      # print(f"Pointing vector: {dir_vector}")
       ref_pos = ref["position"]
       obj_pos = obj["position"]
       
-      ref_to_pos = [ref_pos[0] - obj_pos[0], ref_pos[1] - obj_pos[1]]
+      ref_to_pos = [obj_pos[0] - ref_pos[0], obj_pos[1] - ref_pos[1]]
       dot_product = (
-        ref_to_pos[0] * dir_vector[1] + 
-        ref_to_pos[1] * -dir_vector[0] )
+        ref_to_pos[0] * -dir_vector[1] + 
+        ref_to_pos[1] * dir_vector[0] )
 
-      print(f"{ref_pos},{obj_pos},{dot_product}")
-      if self.action_param == "left" and dot_product < -tolerance:
+      print(f"{obj['name'] }, {obj['position'] },{dot_product}")
+      if self.action_param == "right" and dot_product < -tolerance:
         ret = True
-      elif self.action_param == "right" and dot_product > tolerance:
+      elif self.action_param == "left" and dot_product > tolerance:
         ret = True
     
     # print(f"return: {ret}, ref, obj: {ref_num}, {obj_num}")
@@ -175,7 +178,7 @@ class Reasoner(Node):
       for i in range(len(objects)):
         obj = objects[i]
         # print(obj["name"][:3], name[:3], obj["name"][:3] == name[:3])
-        print(ref_obj["name"],obj["name"])
+        # print(ref_obj["name"],obj["name"])
         if self.meet_ref_criteria(ref_obj,obj):
           d = np.linalg.norm(
             np.array(ref_obj["position"]) - np.array(obj["position"]) )
@@ -198,13 +201,15 @@ class Reasoner(Node):
             target_probs[j] = (dist_sum - value) / dist_sum
       return target_probs
 
-    # self.get_logger().info(f"distances: {self.deitic.distances_from_line}")
-    dist_probs = evaluate_distances(self.deitic.distances_from_line,sigma=2.0)
-    # self.get_logger().info(f"dist_probs: {dist_probs}\n\n")
+    dist_probs = evaluate_distances(self.deitic.distances_from_line,sigma=0.4)
+    # print(f"""Distances: \n{self.deitic.distances_from_line}\n
+    #       \rProbabilities: {dist_probs}""")
+    print(self.deitic.line_point_1.x - self.deitic.line_point_2.x,
+          self.deitic._line_point_1.y - self.deitic.line_point_2.y)
     rows = []
     for i in range(len(self.gdrn_objects)):
       row = evaluate_reference(self.gdrn_objects,i)
-      print(row)
+      # print(row)
       rows.append(list(
         dist_probs[i] * self.gdrn_objects[i]["confidence"] * np.array(row) ))
     
@@ -340,8 +345,8 @@ class Reasoner(Node):
       "objects": self.get_gdrn_object_names(),
       "object_probs": self.target_probs 
     }
-    self.get_logger().info(f"""\nTarget objets:\n {data_dict['objects']}
-                           \rProbs results:\n {data_dict['object_probs']}""")
+    self.get_logger().info(f"""Results:\nDetected objects:\n {data_dict['objects']}
+                           \rTarget probabilities:\n {data_dict['object_probs']}""")
 
     # Create HRICommand
     msg = HRICommand()
@@ -370,19 +375,19 @@ def main():
   
 def tester():
   # function for testing
+  options = ['shape', 'color', 'left', 'right']
+  user_input = input(f"Select from options {options} what to test: ")
+  user_input = user_input.strip()
+  
   rclpy.init()
   reasoner = Reasoner()
-  rclpy.spin_once(reasoner)
-  options = ['shape', 'color', 'left', 'right']
-  user_input = input(f"Select from options list what to test: {options}")
-  user_input = user_input.strip()
   if user_input in options:
     print(f"Option {user_input} selected")
-    tester = ReasonerTester(reasoner,user_input,5.0)
   else:
     print(f"Unknown input: {user_input}, default selected 'color'")
-    tester = ReasonerTester(reasoner,timer_secs=5.0)
+    user_input = "color"
   try:
+    tester = ReasonerTester(reasoner,user_input,5.0)
     rclpy.spin(reasoner)
   except KeyboardInterrupt:
     print("Ending by KeyboardInterrupt")

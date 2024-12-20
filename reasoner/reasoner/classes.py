@@ -25,6 +25,7 @@ GDRNInput:
 
 import rclpy, zmq, ast, re, json
 import numpy as np
+import random as rnd
 
 from gesture_msgs.msg import DeicticSolution, HRICommand
 from scene_msgs.msg import GDRNSolution, GDRNObject
@@ -77,7 +78,8 @@ class PointingInput():
     self._lock.acquire()
     solution = self.msg
     self._lock.release()
-    
+    self.node.get_logger().info(f"Pointing at {solution.object_name}")
+    self.node.get_logger().info(f"At position: {solution.target_object_position}")
     return solution
     
   def evaluate_objects_by_distance(self, sigma=2.0):
@@ -229,7 +231,8 @@ class ReasonerTester():
   def callback(self):
     # update input data, currently only GDRNet and publish
     self.tm_gdrn = self.get_gdrn_output()
-    self.tm_deictic = self.get_deictic_output()
+    idx = rnd.randint(0,len(self.tm_gdrn.objects)-1)
+    self.tm_deictic = self.get_deictic_output(idx=idx)
     self.tm_nlp = self.get_nlp_output()
 
     self.node.get_logger().info("Publishing testing data to topics")
@@ -263,12 +266,12 @@ class ReasonerTester():
     deictic.target_object_position.z = float(self.tm_gdrn.objects[idx].position[2])
     
     deictic.line_point_1 = Point()
-    deictic.line_point_1.x = float(deictic.target_object_position.x + 0.5)
+    deictic.line_point_1.x = float(deictic.target_object_position.x + 0.2)
     deictic.line_point_1.y = float(deictic.target_object_position.y)
     deictic.line_point_1.z = float(deictic.target_object_position.z)
 
     deictic.line_point_2 = Point()
-    deictic.line_point_2.x = float(deictic.target_object_position.x + 0.8)
+    deictic.line_point_2.x = float(deictic.target_object_position.x + 0.4)
     deictic.line_point_2.y = float(deictic.target_object_position.y)
     deictic.line_point_2.z = float(deictic.target_object_position.z)
 
