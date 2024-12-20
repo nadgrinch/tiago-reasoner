@@ -37,7 +37,7 @@ from threading import Lock
 # TODO change these topics according to inputs processing modules
 DEICTIC_TOPIC = '/reasoner/input/gesture'
 LANGUAGE_TOPIC = '/reasoner/input/nlp'
-GDRNET_TOPIC = '/reasoner/input/gdrnet'
+GDRNET_TOPIC = '/gdrn_solution'
 
 class PointingInput():
   """
@@ -69,9 +69,6 @@ class PointingInput():
     self._lock.acquire()
     self.msg = msg
     self._lock.release()
-    self.node.lock.acquire()
-    self.node.published = True
-    self.node.lock.release()
     self.node.get_logger().info("Received DeiticSolution")
   
   def get_solution(self):
@@ -109,9 +106,6 @@ class LanguageInput():
   
   def language_callback(self, msg):
     self.data = json.loads(msg.data[0])
-    self.node.lock.acquire()
-    self.node.published = True
-    self.node.lock.release()
     self.node.get_logger().info('Received HRICommand from NLP')
     
         
@@ -144,9 +138,7 @@ class GDRNetInput():
       obj["color"] = self.get_object_color(obj["name"])
       self.objects.append(obj)
     self._lock.release()
-    self.node.lock.acquire()
-    self.node.published = True
-    self.node.lock.release()
+
     self.node.get_logger().info("Received GDRNSolution")
   
   def get_objects(self):
@@ -206,29 +198,81 @@ class ReasonerTester():
     test: str, which action param to test
     timer_secs: float, period of timer callbacks i.e. update speed
   """
-  def __init__(self, node: Node, test="color", timer_secs=5.0):
+  def __init__(self, node: Node, exclude: list, test="color", timer_secs=5.0):
     self.node = node
+    self.exclude = exclude
     self.test = test
+    self.timer_secs = timer_secs
 
-    # Create test publishers
-    self.pub_d = self.node.create_publisher(DeicticSolution, DEICTIC_TOPIC, 10)
-    self.pub_g = self.node.create_publisher(GDRNSolution, GDRNET_TOPIC, 10)
-    self.pub_n = self.node.create_publisher(HRICommand, LANGUAGE_TOPIC, 10)
+    self.timer = None
+    self.pub_d = None
+    self.pub_g = None
+    self.pub_n = None
+    self.sub_d = None
+    self.sub_g = None
+    self.sub_n = None
+
+    off_d = True
+    off_g = True
+    off_n = True
+
+    for off in self.exclude:
+      if off.strip() == "deictic":
+        off_d = False
+      elif off.strip() == "gdrn":
+        off_g = False
+      elif off.strip() == "nlp":
+        off_n = False
     
+    self.tester_setup(self.node, off_d, off_g, off_n)
     self.node.get_logger().info("ReasonerTester initialized")
-    self.timer = self.node.create_timer(timer_secs, self.callback)
 
-  def callback(self):
+  def tester_setup(self,node: Node, deitic=True, gdrnet=True, nlp=True):
+    if not deitic and not gdrnet and not nlp:
+      self.pub_d = None
+      self.pub_g = None
+      self.pub_n = None
+      return
+    else:
+      self.timer = node.create_timer(self.timer_secs, self.timer_callback)
+    if deitic:
+      self.pub_d = node.create_publisher(DeicticSolution, DEICTIC_TOPIC, 10)
+    else:
+      self.sub_d = node.create_subscription(
+        DeicticSolution, DEICTIC_TOPIC, self.deictic_callback, 10 )
+    if gdrnet:
+      self.pub_g = node.create_publisher(GDRNSolution, GDRNET_TOPIC, 10)
+    else:
+      self.sub_g = node.create_subscription(
+        GDRNSolution, GDRNET_TOPIC, self.gdrn_callback, 10 )
+    if nlp:
+      self.pub_n = node.create_publisher(HRICommand, LANGUAGE_TOPIC, 10)
+    else:
+      self.sub_n = node.create_subscription(
+        HRICommand, LANGUAGE_TOPIC, self.nlp_callback, 10 )    
+
+  def deictic_callback(self, msg):
+    self.tm_deictic = msg
+
+  def gdrn_callback(self, msg):
+    self.tm_gdrn = msg
+
+  def nlp_callback(self, msg):
+    self.tm_nlp = msg
+
+  def timer_callback(self):
     # update input data, currently only GDRNet and publish
     self.tm_gdrn = self.get_gdrn_output()
-    idx = rnd.randint(0,len(self.tm_gdrn.objects)-1)
-    self.tm_deictic = self.get_deictic_output(idx=idx)
+    self.tm_deictic = self.get_deictic_output()
     self.tm_nlp = self.get_nlp_output()
 
     # self.node.get_logger().info("Publishing testing data to topics")
-    self.pub_d.publish(self.tm_deictic)
-    self.pub_g.publish(self.tm_gdrn)
-    self.pub_n.publish(self.tm_nlp)
+    if self.pub_d:
+      self.pub_d.publish(self.tm_deictic)
+    if self.pub_g:
+      self.pub_g.publish(self.tm_gdrn)
+    if self.pub_n:
+      self.pub_n.publish(self.tm_nlp)
 
   def get_deictic_output(self, idx=0):
     # Gets DeicticSolution input, currently dummy input
@@ -243,78 +287,88 @@ class ReasonerTester():
           distances.append(0.0)
       return distances
 
-    deictic = DeicticSolution()
-    deictic.object_id = idx
-    deictic.object_name = self.tm_gdrn.objects[idx].name
-    deictic.object_names = [self.tm_gdrn.objects[i].name for i in range(len(self.tm_gdrn.objects))]
-    deictic.distances_from_line = calculate_distances(self.tm_gdrn.objects[idx], self.tm_gdrn)
-    
-    # conversion to float should not be necessary, but it caused issues
-    deictic.target_object_position = Point()
-    deictic.target_object_position.x = float(self.tm_gdrn.objects[idx].position[0])
-    deictic.target_object_position.y = float(self.tm_gdrn.objects[idx].position[1])
-    deictic.target_object_position.z = float(self.tm_gdrn.objects[idx].position[2])
-    
-    deictic.line_point_1 = Point()
-    deictic.line_point_1.x = float(deictic.target_object_position.x + 0.2)
-    deictic.line_point_1.y = float(deictic.target_object_position.y)
-    deictic.line_point_1.z = float(deictic.target_object_position.z)
+    if self.sub_d == None:
+      fixed_pointing = GDRNObject()
+      fixed_pointing.position = [1.13, 0.14, 0.65]
 
-    deictic.line_point_2 = Point()
-    deictic.line_point_2.x = float(deictic.target_object_position.x + 0.4)
-    deictic.line_point_2.y = float(deictic.target_object_position.y)
-    deictic.line_point_2.z = float(deictic.target_object_position.z)
+      deictic = DeicticSolution()
+      deictic.distances_from_line = calculate_distances(fixed_pointing, self.tm_gdrn)
+      deictic.object_id = int(np.argmax(np.array(deictic.distances_from_line)))
+      deictic.object_name = self.tm_gdrn.objects[idx].name
+      deictic.object_names = [self.tm_gdrn.objects[i].name for i in range(len(self.tm_gdrn.objects))]
+      
+      # conversion to float should not be necessary, but it caused issues
+      deictic.target_object_position = Point()
+      deictic.target_object_position.x = float(self.tm_gdrn.objects[idx].position[0])
+      deictic.target_object_position.y = float(self.tm_gdrn.objects[idx].position[1])
+      deictic.target_object_position.z = float(self.tm_gdrn.objects[idx].position[2])
+      
+      deictic.line_point_1 = Point()
+      deictic.line_point_1.x = float(deictic.target_object_position.x + 0.2)
+      deictic.line_point_1.y = float(deictic.target_object_position.y)
+      deictic.line_point_1.z = float(deictic.target_object_position.z)
 
-    deictic.hand_velocity = 0.0
-    return deictic
+      deictic.line_point_2 = Point()
+      deictic.line_point_2.x = float(deictic.target_object_position.x + 0.4)
+      deictic.line_point_2.y = float(deictic.target_object_position.y)
+      deictic.line_point_2.z = float(deictic.target_object_position.z)
+
+      deictic.hand_velocity = 0.0
+      return deictic
+    return self.tm_deictic
 
   def get_gdrn_output(self):
-    # Creates GDRNSolution from ZeroMQ dict representation
-    context = zmq.Context()
-    self.socket = context.socket(zmq.SUB)
-    self.socket.connect("tcp://localhost:5557")
-    self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
+    # return input from subscriber or from ZMQ
+    if self.sub_g == None:
+      # Creates GDRNSolution from ZeroMQ dict representation
+      context = zmq.Context()
+      self.socket = context.socket(zmq.SUB)
+      self.socket.connect("tcp://localhost:5557")
+      self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
 
-    gdrn = GDRNSolution()
-    objects = []
-    try:
-      msg_str = self.socket.recv_string()
-      msg_data = json.loads(msg_str)
-      if type(msg_data) == list:
-        for obj in msg_data:
-          if type(obj) == dict:
-            gdrn_obj = GDRNObject()
-            gdrn_obj.name = obj["name"]
-            gdrn_obj.confidence = obj["confidence"]
-            gdrn_obj.position = obj["position"]
-            gdrn_obj.orientation = obj["orientation"]
-            objects.append(gdrn_obj)
-          else:
-            self.node.get_logger().warn(
-              f"[Tester] object in msg_data is not dict, but {type(msg_data)}")
-        gdrn.objects = objects
-      else:
-        self.node.get_logger().error("[Tester] Received msg_str is not list")
-    except:      
-      self.node.get_logger().error(
-        "[Tester] Error in receiving msg from gdrn ROS1")
-    return gdrn
+      gdrn = GDRNSolution()
+      objects = []
+      try:
+        msg_str = self.socket.recv_string()
+        msg_data = json.loads(msg_str)
+        if type(msg_data) == list:
+          for obj in msg_data:
+            if type(obj) == dict:
+              gdrn_obj = GDRNObject()
+              gdrn_obj.name = obj["name"]
+              gdrn_obj.confidence = obj["confidence"]
+              gdrn_obj.position = obj["position"]
+              gdrn_obj.orientation = obj["orientation"]
+              objects.append(gdrn_obj)
+            else:
+              self.node.get_logger().warn(
+                f"[Tester] object in msg_data is not dict, but {type(msg_data)}")
+          gdrn.objects = objects
+        else:
+          self.node.get_logger().error("[Tester] Received msg_str is not list")
+      except:      
+        self.node.get_logger().error(
+          "[Tester] Error in receiving msg from gdrn ROS1")
+      return gdrn
+    return self.tm_gdrn
 
   def get_nlp_output(self):
-    # Gets HRICommand from NLP, currently dummy input
-    nlp = HRICommand()
-    # for testing a_p ~ action_param
-    a_p = self.test if self.test in ["left", "right", "shape", "color"] else ""
-    test_dict = {
-      "action": ["pick"],
-      "objects": ["null"],
-      "action_param": [a_p],
-      "object_param": []
-    }
-    # maybe necessary to config nlp.header.stamp and frame_id
-    nlp.header = Header()
-    nlp.data = [json.dumps(test_dict)]
+    if self.sub_n == None:
+      # Gets HRICommand from NLP, currently dummy input
+      nlp = HRICommand()
+      # for testing a_p ~ action_param
+      a_p = self.test if self.test in ["left", "right", "shape", "color"] else ""
+      test_dict = {
+        "action": ["pick"],
+        "objects": ["null"],
+        "action_param": [a_p],
+        "object_param": []
+      }
+      # maybe necessary to config nlp.header.stamp and frame_id
+      nlp.header = Header()
+      nlp.data = [json.dumps(test_dict)]
 
-    return nlp
+      return nlp
+    return self.tm_nlp
 
 

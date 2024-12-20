@@ -17,9 +17,7 @@ class Reasoner(Node):
   def __init__(self, sigma=0.4):
     super().__init__('tiago_reasoner_node')
     self.relations = ["color", "shape", "left", "right"]
-    self.published = False
     self.sigma = sigma
-    self.lock = Lock()
     
     # Initialize subscriber classes
     self.pointing_sub = PointingInput(self)
@@ -39,15 +37,16 @@ class Reasoner(Node):
         
   def main_loop(self):
     # Main processing loop
-    if self.language_sub.data == None and not self.get_published():
-      self.get_logger().warn("Nothing (new) received from inputs, waiting")
+    if self.language_sub.data == None:
+      self.get_logger().warn("No NLP input, waiting")
       return
     
     self.action = self.language_sub.data["action"]
     self.action_param = self.language_sub.data["action_param"][0]
     self.lang_objects = self.language_sub.data["objects"]
     self.lang_objects_param = self.language_sub.data["object_param"]
-    
+    self.language_sub.data = None
+
     self.deitic = self.pointing_sub.get_solution()
     self.gdrn_objects = self.gdrnet_sub.get_objects()
     
@@ -72,12 +71,6 @@ class Reasoner(Node):
         self.target_probs = self.eval_language()
     
     self.publish_results()
-
-  def get_published(self):
-    self.lock.acquire()
-    published = self.published
-    self.lock.release()
-    return published
 
   def get_gdrn_object_names(self):
     """
@@ -168,7 +161,7 @@ class Reasoner(Node):
       for dist in distances:
           prob = np.exp(-(dist**2) / (2 * self.sigma**2))
           unnormalized_p.append(prob)
-      normalized_p = unnormalized_p / np.sum(unnormalized_p)
+      normalized_p = list(unnormalized_p / np.sum(unnormalized_p))
       return normalized_p
 
     def evaluate_reference(objects: list, ref: int):
@@ -236,7 +229,7 @@ class Reasoner(Node):
       for dist in distances:
           prob = np.exp(-(dist**2) / (2 * self.sigma**2))
           unnormalized_p.append(prob)
-      normalized_p = unnormalized_p / np.sum(unnormalized_p)
+      normalized_p = list(unnormalized_p / np.sum(unnormalized_p))
       return normalized_p
     
     def get_confidence_scores(objects: list):
@@ -394,10 +387,7 @@ def tester():
   user_input = user_input.strip().split()
   
   rclpy.init()
-  try:
-    reasoner = Reasoner(sigma=float(user_input[1]))
-  except:
-    reasoner = Reasoner()
+  reasoner = Reasoner()
   
   if user_input[0] in options:
     print(f"Option: '{user_input}' selected")
@@ -405,7 +395,7 @@ def tester():
     print(f"Unknown input: '{user_input}', default selected 'color'")
     user_input = "color"
   try:
-    tester = ReasonerTester(reasoner,user_input[0],5.0)
+    tester = ReasonerTester(reasoner,user_input[1:],user_input[0],2.5)
     rclpy.spin(reasoner)
   except KeyboardInterrupt:
     print("Ending by KeyboardInterrupt")
