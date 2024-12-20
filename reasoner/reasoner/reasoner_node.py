@@ -14,10 +14,11 @@ class Reasoner(Node):
   """
   Poiting, Language and GDRNet merger node
   """
-  def __init__(self):
+  def __init__(self, sigma=0.4):
     super().__init__('tiago_reasoner_node')
     self.relations = ["color", "shape", "left", "right"]
     self.published = False
+    self.sigma = sigma
     self.lock = Lock()
     
     # Initialize subscriber classes
@@ -32,7 +33,7 @@ class Reasoner(Node):
     self.socket.bind("tcp://*:5558")
     
     # Create timer for main processing loop
-    self.timer = self.create_timer(2.0, self.main_loop)
+    self.timer = self.create_timer(5.0, self.main_loop)
     
     self.get_logger().info('Tiago Merger node initialized')
         
@@ -144,7 +145,7 @@ class Reasoner(Node):
         ref_to_pos[0] * -dir_vector[1] + 
         ref_to_pos[1] * dir_vector[0] )
 
-      print(f"{obj['name'] }, {obj['position'] },{dot_product}")
+      # print(f"{obj['name'] }, {obj['position'] },{dot_product}")
       if self.action_param == "right" and dot_product < -tolerance:
         ret = True
       elif self.action_param == "left" and dot_product > tolerance:
@@ -160,12 +161,12 @@ class Reasoner(Node):
     """
     # demo_prob.py implementation
     
-    def evaluate_distances(distances: list, sigma=0.4):
+    def evaluate_distances(distances: list):
       # returns list of probabilities from distances
       # distances to Gaussian distribution and normalized
       unnormalized_p = []
       for dist in distances:
-          prob = np.exp(-(dist**2) / (2 * sigma**2))
+          prob = np.exp(-(dist**2) / (2 * self.sigma**2))
           unnormalized_p.append(prob)
       normalized_p = unnormalized_p / np.sum(unnormalized_p)
       return normalized_p
@@ -177,13 +178,16 @@ class Reasoner(Node):
       # firstly we fill probs list with distances for related objects
       for i in range(len(objects)):
         obj = objects[i]
-        # print(obj["name"][:3], name[:3], obj["name"][:3] == name[:3])
         # print(ref_obj["name"],obj["name"])
         if self.meet_ref_criteria(ref_obj,obj):
           d = np.linalg.norm(
-            np.array(ref_obj["position"]) - np.array(obj["position"]) )
-          # print(d)
-          target_probs.append(d)
+            np.array(obj["position"]) - np.array(ref_obj["position"]) )
+          # distance d ~ smaller better, Gaussian distribution
+          if d != 0.0:
+            d_prob = np.exp(-(d**2) / (2 * 2.0**2))
+          else:
+            d_prob = d
+          target_probs.append(d_prob)
         else:
           # for later sum unrelated objects needs to equal zero
           target_probs.append(0.0)
@@ -201,11 +205,12 @@ class Reasoner(Node):
             target_probs[j] = (dist_sum - value) / dist_sum
       return target_probs
 
-    dist_probs = evaluate_distances(self.deitic.distances_from_line,sigma=0.4)
-    # print(f"""Distances: \n{self.deitic.distances_from_line}\n
-    #       \rProbabilities: {dist_probs}""")
-    print(self.deitic.line_point_1.x - self.deitic.line_point_2.x,
-          self.deitic._line_point_1.y - self.deitic.line_point_2.y)
+    dist_probs = evaluate_distances(self.deitic.distances_from_line)
+    # print(f"[DEBUG] dist_probs: {dist_probs}")
+
+    # print(self.deitic.line_point_1.x - self.deitic.line_point_2.x,
+    #       self.deitic._line_point_1.y - self.deitic.line_point_2.y)
+
     rows = []
     for i in range(len(self.gdrn_objects)):
       row = evaluate_reference(self.gdrn_objects,i)
@@ -214,7 +219,7 @@ class Reasoner(Node):
         dist_probs[i] * self.gdrn_objects[i]["confidence"] * np.array(row) ))
     
     probs_matrix = np.array(rows)
-    # print(probs_matrix)
+    # print(f"[DEBUG] prob_matrix:\n {prob_matrix}")
     ret = np.sum(probs_matrix,axis=0)
     return list(ret / np.sum(ret))
   
@@ -224,12 +229,12 @@ class Reasoner(Node):
     distance to pointing input
     """ 
     
-    def evaluate_distances(distances: list, sigma=0.4):
+    def evaluate_distances(distances: list):
       # returns list of probabilities from distances
       # distances to Gaussian distribution and normalized
       unnormalized_p = []
       for dist in distances:
-          prob = np.exp(-(dist**2) / (2 * sigma**2))
+          prob = np.exp(-(dist**2) / (2 * self.sigma**2))
           unnormalized_p.append(prob)
       normalized_p = unnormalized_p / np.sum(unnormalized_p)
       return normalized_p
@@ -241,7 +246,7 @@ class Reasoner(Node):
         scores.append(obj["confidence"])
       return scores
     
-    probs = evaluate_distances(self.deitic.distances_from_line, sigma=2.0)
+    probs = evaluate_distances(self.deitic.distances_from_line)
     probs = np.array(probs) * np.array(get_confidence_scores(self.gdrn_objects))
     
     return list(probs)
@@ -273,8 +278,12 @@ class Reasoner(Node):
         if self.meet_ref_criteria(obj,ref_obj):
           d = np.linalg.norm(
             np.array(ref_obj["position"]) - np.array(obj["position"]) )
-          # print(d)
-          target_probs.append(d)
+          # distance d ~ smaller better, Gaussian distribution
+          if d != 0.0:
+            d_prob = np.exp(-(d**2) / (2 * 2.0**2))
+          else:
+            d_prob = d
+          target_probs.append(d_prob)
         else:
           # for later sum unrelated objects needs to equal zero
           target_probs.append(0.0)
@@ -321,18 +330,18 @@ class Reasoner(Node):
           ret.append(obj)
       return ret
     
-    def evaluate_objects(objects: list, sigma=2.0):
+    def evaluate_objects(objects: list):
       # returns prob list based on object distance to robot
       unnormalized = []
       for obj in objects:
         dist = np.linalg.norm(obj["position"])
-        prob = np.exp(-(dist**2) / (2 * sigma**2))
+        prob = np.exp(-(dist**2) / (2 * self.sigma**2))
         unnormalized.append(prob)
       ret = unnormalized / np.sum(unnormalized)
       return list(ret)
     
     language_objects = find_objects(self.gdrn_objects, self.lang_objects[0])
-    probs = evaluate_objects(language_objects,sigma=2.0)
+    probs = evaluate_objects(language_objects)
     return probs
 
   def publish_results(self):
@@ -345,8 +354,13 @@ class Reasoner(Node):
       "objects": self.get_gdrn_object_names(),
       "object_probs": self.target_probs 
     }
-    self.get_logger().info(f"""Results:\nDetected objects:\n {data_dict['objects']}
-                           \rTarget probabilities:\n {data_dict['object_probs']}""")
+
+    target_idx = np.argmax(np.array(data_dict["object_probs"]))
+    self.get_logger().info("Results:")
+    print(f"\tGDRN objects:\n\t {data_dict['objects']}")
+    print(f"\tRespective probabilities:\n\t {data_dict['object_probs']}")
+    print(f"\tTarget object with position:\n\t {data_dict['objects'][target_idx]}")
+    print(f"\t {self.gdrn_objects[target_idx]['position']}\n\n")
 
     # Create HRICommand
     msg = HRICommand()
@@ -377,17 +391,21 @@ def tester():
   # function for testing
   options = ['shape', 'color', 'left', 'right']
   user_input = input(f"Select from options {options} what to test: ")
-  user_input = user_input.strip()
+  user_input = user_input.strip().split()
   
   rclpy.init()
-  reasoner = Reasoner()
-  if user_input in options:
-    print(f"Option {user_input} selected")
+  try:
+    reasoner = Reasoner(sigma=float(user_input[1]))
+  except:
+    reasoner = Reasoner()
+  
+  if user_input[0] in options:
+    print(f"Option: '{user_input}' selected")
   else:
-    print(f"Unknown input: {user_input}, default selected 'color'")
+    print(f"Unknown input: '{user_input}', default selected 'color'")
     user_input = "color"
   try:
-    tester = ReasonerTester(reasoner,user_input,5.0)
+    tester = ReasonerTester(reasoner,user_input[0],5.0)
     rclpy.spin(reasoner)
   except KeyboardInterrupt:
     print("Ending by KeyboardInterrupt")

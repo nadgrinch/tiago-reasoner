@@ -77,28 +77,18 @@ class PointingInput():
   def get_solution(self):
     self._lock.acquire()
     solution = self.msg
+    name = solution.object_name
+    index = solution.object_id
+    pos_x = solution.target_object_position.x
+    pos_y = solution.target_object_position.y
+    pos_z = solution.target_object_position.z
     self._lock.release()
-    self.node.get_logger().info(f"Pointing at {solution.object_name}")
-    self.node.get_logger().info(f"At position: {solution.target_object_position}")
+    
+    self.node.get_logger().info(f"Pointing at: {name}, idx: {index}")
+    self.node.get_logger().info("At position: [%.4f, %.4f, %.4f]" %
+                                (pos_x, pos_y, pos_z) )
     return solution
     
-  def evaluate_objects_by_distance(self, sigma=2.0):
-    """
-    Compute probability of distances_from_line using Normal distribution
-    Input:
-      - sigma: default value 0.3
-    Output:
-      - normalized_probs 
-    """
-    # Using Gaussian (normal) distribution
-    # TODO sigma value may need to be tuned
-    unnormalized_probs = []
-    for distance in self.distances_from_line:
-      unnormalized_probs.append(np.exp(-(distance**2)/(2 * sigma**2)))
-    
-    normalized_probs = unnormalized_probs / sum(unnormalized_probs)
-    return normalized_probs
-
 
 class LanguageInput():
   """
@@ -235,7 +225,7 @@ class ReasonerTester():
     self.tm_deictic = self.get_deictic_output(idx=idx)
     self.tm_nlp = self.get_nlp_output()
 
-    self.node.get_logger().info("Publishing testing data to topics")
+    # self.node.get_logger().info("Publishing testing data to topics")
     self.pub_d.publish(self.tm_deictic)
     self.pub_g.publish(self.tm_gdrn)
     self.pub_n.publish(self.tm_nlp)
@@ -301,8 +291,7 @@ class ReasonerTester():
             objects.append(gdrn_obj)
           else:
             self.node.get_logger().warn(
-              f"[Tester] object in msg_data is not dict, but {type(msg_data)}"
-              )
+              f"[Tester] object in msg_data is not dict, but {type(msg_data)}")
         gdrn.objects = objects
       else:
         self.node.get_logger().error("[Tester] Received msg_str is not list")
