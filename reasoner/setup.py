@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'reasoner_node = reasoner.reasoner_node:main'
+            'reasoner_node = reasoner.reasoner_node:main',
+            'user_test = reasoner.reasoner_node:tester'
         ],
     },
 )

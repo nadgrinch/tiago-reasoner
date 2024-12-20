@@ -3,6 +3,7 @@
 import rclpy, zmq, re, json, time
 import numpy as np
 
+from threading import Lock
 from gesture_msgs.msg import HRICommand, DeicticSolution
 from scene_msgs.msg import GDRNObject, GDRNSolution
 from std_msgs.msg import Header
@@ -16,6 +17,8 @@ class Reasoner(Node):
   def __init__(self):
     super().__init__('tiago_reasoner_node')
     self.relations = ["color", "shape", "left", "right"]
+    self.published = False
+    self.lock = Lock()
     
     # Initialize subscriber classes
     self.pointing_sub = PointingInput(self)
@@ -35,9 +38,11 @@ class Reasoner(Node):
         
   def main_loop(self):
     # Main processing loop
-    if self.language_sub.data == None:
-      self.get_logger().warn("LanguageInput empty, skipping calculations!")
+    self.lock.acquire()
+    if self.language_sub.data == None and not self.published:
+      self.get_logger().warn("Nothing (new) received from inputs, waiting")
       return
+    self.lock.release()
     
     self.action = self.language_sub.data["action"]
     self.action_param = self.language_sub.data["action_param"][0]
@@ -47,33 +52,27 @@ class Reasoner(Node):
     self.deitic = self.pointing_sub.get_solution()
     self.gdrn_objects = self.gdrnet_sub.get_objects()
     
-    self.get_logger().info(f"[tiago_reasoner_node] Action parameter: {self.action_param}")
+    self.get_logger().info(f"[Action parameter: {self.action_param}")
     if self.action_param in self.relations:
       # if known action param and if target objects
       if self.nlp_empty():
-        self.get_logger().info("Pointing ref")
-        self.target_probs = self.eval_pointing_ref()
+        self.get_logger().info(f"Find target of gesture with action parameter")
+        self.target_probs = self.eval_pointing_param()
       else:
-        self.get_logger().info("Language ref")
-        self.target_probs = self.eval_language_ref()
+        self.get_logger().info(f"Find target of NLP with action parameter")
+        self.target_probs = self.eval_language_param()
         pass
       
     else:
       if self.nlp_empty():
         # pick object human is pointing at
-        self.get_logger().info("Pointing")
+        self.get_logger().info("Find target of gesture")
         self.target_probs = self.eval_pointing()
       else:
-        self.get_logger().info("Language")
+        self.get_logger().info("Find target of NLP")
         self.target_probs = self.eval_language()
     
     self.publish_results()
-
-  def wait(self, duration:int):
-    # simple wait duration number of rates
-    self.get_logger().info(f"Waiting for {duration} seconds...")
-    time.sleep(duration)
-    self.get_logger().info("Done waiting!")
 
   def get_gdrn_object_names(self):
     """
@@ -102,21 +101,37 @@ class Reasoner(Node):
       
     return ret
 
-  def meet_ref_criteria(self, ref: dict, obj: dict, tolerance=0.1, scale=10.0):
+  def meet_ref_criteria(self, ref: dict, obj: dict, tolerance=0.1):
     # return True if given object meets filter criteria of reference
+    def check_shape(ref: dict, obj: dict) -> bool:
+      ref_num = int(ref["name"][:3])
+      obj_num = int(obj["name"][:3])
+      return ref_num == obj_num
     ret = False
-    ref_num = int(ref["name"][:3])
-    obj_num = int(obj["name"][:3])
+    
+    def check_color(ref: dict, obj: dict) -> bool:
+      ret = False
+      if type(ref["color"]) == str and type(obj["color"]) == str:
+        ret = (ref["color"] == obj["color"])
+      elif type(ref["color"]) == list and type(obj["color"]) == str:
+        ret = (obj["color"] in ref["color"])
+      elif type(ref["color"]) == str and type(obj["color"]) == list:
+        ret = (ref["color"] in obj["color"])
+      elif type(ref["color"]) == list and type(obj["color"]) == list:
+        for ref_color in ref["color"]:
+          if ref_color in obj["color"]:
+            ret = True
+      return ret
+    
     # TODO better color and id ==
-    if (self.action_param == "color" and obj["color"] == ref["color"]):
+    if (self.action_param == "color" and check_color(ref,obj)):
       ret = True
-    elif (self.action_param == "shape" and obj_num == ref_num):
+    elif (self.action_param == "shape" and check_shape(ref,obj)):
       ret = True
     elif self.action_param in ["left", "right"]:
       dir_vector = [
-        scale*(self.deitic.line_point_1.x - self.deitic.line_point_2.x), 
-        scale*(self.deitic.line_point_1.y - self.deitic.line_point_2.y)
-        ]
+        self.deitic.line_point_1.x - self.deitic.line_point_2.x, 
+        self.deitic.line_point_1.y - self.deitic.line_point_2.y ]
       # print(dir_vector)
       ref_pos = ref["position"]
       obj_pos = obj["position"]
@@ -124,8 +139,7 @@ class Reasoner(Node):
       ref_to_pos = [ref_pos[0] - obj_pos[0], ref_pos[1] - obj_pos[1]]
       dot_product = (
         ref_to_pos[0] * dir_vector[1] + 
-        ref_to_pos[1] * -dir_vector[0]
-        )
+        ref_to_pos[1] * -dir_vector[0] )
 
       print(f"{ref_pos},{obj_pos},{dot_product}")
       if self.action_param == "left" and dot_product < -tolerance:
@@ -136,7 +150,7 @@ class Reasoner(Node):
     # print(f"return: {ret}, ref, obj: {ref_num}, {obj_num}")
     return ret
 
-  def eval_pointing_ref(self):
+  def eval_pointing_param(self):
     """
     Calculates probabilities of target (GDRNet++) objects with reference
     from pointing input
@@ -164,8 +178,7 @@ class Reasoner(Node):
         print(ref_obj["name"],obj["name"])
         if self.meet_ref_criteria(ref_obj,obj):
           d = np.linalg.norm(
-            np.array(ref_obj["position"]) - np.array(obj["position"])
-            )
+            np.array(ref_obj["position"]) - np.array(obj["position"]) )
           # print(d)
           target_probs.append(d)
         else:
@@ -193,8 +206,7 @@ class Reasoner(Node):
       row = evaluate_reference(self.gdrn_objects,i)
       print(row)
       rows.append(list(
-        dist_probs[i] * self.gdrn_objects[i]["confidence"] * np.array(row)
-        ))
+        dist_probs[i] * self.gdrn_objects[i]["confidence"] * np.array(row) ))
     
     probs_matrix = np.array(rows)
     # print(probs_matrix)
@@ -229,7 +241,7 @@ class Reasoner(Node):
     
     return list(probs)
   
-  def eval_language_ref(self):
+  def eval_language_param(self):
     """
     Calculates probabilities of target (GDRNet++) objects with reference
     from language input
@@ -255,8 +267,7 @@ class Reasoner(Node):
         obj = objects[i]
         if self.meet_ref_criteria(obj,ref_obj):
           d = np.linalg.norm(
-            np.array(ref_obj["position"]) - np.array(obj["position"])
-            )
+            np.array(ref_obj["position"]) - np.array(obj["position"]) )
           # print(d)
           target_probs.append(d)
         else:
@@ -285,8 +296,7 @@ class Reasoner(Node):
     for i in indexes:
       row = evaluate_reference(self.gdrn_objects,i)
       rows.append(list(
-        prob * self.gdrn_objects[i]["confidence"] * np.array(row)
-        ))
+        prob * self.gdrn_objects[i]["confidence"] * np.array(row) ))
     
     probs_matrix = np.array(rows)
     ret = np.sum(probs_matrix,axis=0)
@@ -300,8 +310,8 @@ class Reasoner(Node):
       # returns list of object's indexes from language
       ret = []
       for obj in objects:
-        obj_name = obj["name"][4:] # strip gdrnet type number
-        obj_name = re.match(r'^([^_]*)', obj_name).group(1) # strip index number
+        # strip gdrnet type number and index number
+        obj_name = re.match(r'^([^_]*)', obj["name"][4:]).group(1)
         if obj_name == param:
           ret.append(obj)
       return ret
@@ -339,30 +349,47 @@ class Reasoner(Node):
     msg.header.stamp = self.get_clock().now().to_msg()
     msg.header.frame_id = "reasoner"
 
-    msg.data = [json.dumps(data_dict)]
+    data_str = json.dumps(data_dict)
+    msg.data = [data_str]
     
-    serialized_msg = json.dumps({
-        "header": {
-            "stamp": msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9,
-            "frame_id": msg.header.frame_id
-        },
-        "data": msg.data
-    })
-    self.socket.send_string(serialized_msg)
+    self.socket.send_string(data_str)
     self.pub.publish(msg)
-    self.wait(10)
 
 
 def main():
-  # better user interface for testing
+  # Inputs from real modules
   rclpy.init()
-  merger_node = Reasoner()
-  tester = ReasonerTester(merger_node,"left")
-  rclpy.spin(merger_node)
-  merger_node.destroy_node()
-  rclpy.shutdown()
+  reasoner = Reasoner()
+  try:
+    rclpy.spin(reasoner)
+  except KeyboardInterrupt:
+    print("Ending by KeyboardInterrupt")
+  finally:
+    reasoner.destroy_node()
+    rclpy.shutdown()
+  
+def tester():
+  # function for testing
+  rclpy.init()
+  reasoner = Reasoner()
+  rclpy.spin_once(reasoner)
+  options = ['shape', 'color', 'left', 'right']
+  user_input = input(f"Select from options list what to test: {options}")
+  user_input = user_input.strip()
+  if user_input in options:
+    print(f"Option {user_input} selected")
+    tester = ReasonerTester(reasoner,user_input,5.0)
+  else:
+    print(f"Unknown input: {user_input}, default selected 'color'")
+    tester = ReasonerTester(reasoner,timer_secs=5.0)
+  try:
+    rclpy.spin(reasoner)
+  except KeyboardInterrupt:
+    print("Ending by KeyboardInterrupt")
+  finally:
+    reasoner.destroy_node()
+    rclpy.shutdown()
     
-
 if __name__ == '__main__':
-  main()
+  tester()
     

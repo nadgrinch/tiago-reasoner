@@ -1,3 +1,27 @@
+"""
+This python file contains 3 Ros2 Subscriber classes and 1 class for testing.
+
+PointingInput:
+  DeicticSolution.msg topic subscriber
+  pointting_object_selection package from Teleoperation Gesture Toolbox 
+  https://github.com/imitrob/teleop_gesture_toolbox.git
+
+LanguageInput:
+  HRICommand.msg topic subscriber
+  natural_gesture_processing package from iChores project
+  https://github.com/ichores-research/natural_language_processing/
+  HRICommand is just a way to publish dictionary of fixed language structure
+  from NLP as string
+
+GDRNInput:
+  GDRNSolution.msg topic subscriber
+  GDRNet++ service implementation is in repository ichores_pipeline
+  https://github.com/ichores-research/ichores_pipeline/
+  That uses Docker with ROS1 noetic and this is ROS2 humble, so there is need
+  for some gdrnet publisher to ROS2 via ZeroMQ or make bridge from ROS1 to ROS2
+  So it technically subscribes the bridged topic
+"""
+
 
 import rclpy, zmq, ast, re, json
 import numpy as np
@@ -44,6 +68,9 @@ class PointingInput():
     self._lock.acquire()
     self.msg = msg
     self._lock.release()
+    self.node.lock.acquire()
+    self.node.published = True
+    self.node.lock.release()
     self.node.get_logger().info("Received DeiticSolution")
   
   def get_solution(self):
@@ -90,6 +117,9 @@ class LanguageInput():
   
   def language_callback(self, msg):
     self.data = json.loads(msg.data[0])
+    self.node.lock.acquire()
+    self.node.published = True
+    self.node.lock.release()
     self.node.get_logger().info('Received HRICommand from NLP')
     
         
@@ -122,6 +152,9 @@ class GDRNetInput():
       obj["color"] = self.get_object_color(obj["name"])
       self.objects.append(obj)
     self._lock.release()
+    self.node.lock.acquire()
+    self.node.published = True
+    self.node.lock.release()
     self.node.get_logger().info("Received GDRNSolution")
   
   def get_objects(self):
@@ -176,8 +209,12 @@ class GDRNetInput():
 class ReasonerTester():
   """
   Class for testing Reasoner (merger_node)
+  Input:
+    node: Node, required
+    test: str, which action param to test
+    timer_secs: float, period of timer callbacks i.e. update speed
   """
-  def __init__(self, node: Node, test: str):
+  def __init__(self, node: Node, test="color", timer_secs=5.0):
     self.node = node
     self.test = test
 
@@ -185,20 +222,12 @@ class ReasonerTester():
     self.pub_d = self.node.create_publisher(DeicticSolution, DEICTIC_TOPIC, 10)
     self.pub_g = self.node.create_publisher(GDRNSolution, GDRNET_TOPIC, 10)
     self.pub_n = self.node.create_publisher(HRICommand, LANGUAGE_TOPIC, 10)
-
-    # Dummy (testing) data, tm ~ test message
-    # self.tm_gdrn = self.get_gdrn_output()
-    # self.tm_deictic = self.get_deictic_output()
-    # self.tm_nlp = self.get_nlp_output()
     
     self.node.get_logger().info("ReasonerTester initialized")
-    # self.node.get_logger().info(
-    #   f"{self.tm_gdrn.objects[0].name}, {self.tm_deictic.object_name}, \n{self.tm_nlp.data}")
-    
-    self.timer = self.node.create_timer(5.0, self.callback)
-
+    self.timer = self.node.create_timer(timer_secs, self.callback)
 
   def callback(self):
+    # update input data, currently only GDRNet and publish
     self.tm_gdrn = self.get_gdrn_output()
     self.tm_deictic = self.get_deictic_output()
     self.tm_nlp = self.get_nlp_output()
@@ -209,6 +238,7 @@ class ReasonerTester():
     self.pub_n.publish(self.tm_nlp)
 
   def get_deictic_output(self, idx=0):
+    # Gets DeicticSolution input, currently dummy input
     def calculate_distances(target: GDRNObject,gdrn: GDRNSolution):
       distances = []
       t_pos = np.array(target.position)
@@ -226,6 +256,7 @@ class ReasonerTester():
     deictic.object_names = [self.tm_gdrn.objects[i].name for i in range(len(self.tm_gdrn.objects))]
     deictic.distances_from_line = calculate_distances(self.tm_gdrn.objects[idx], self.tm_gdrn)
     
+    # conversion to float should not be necessary, but it caused issues
     deictic.target_object_position = Point()
     deictic.target_object_position.x = float(self.tm_gdrn.objects[idx].position[0])
     deictic.target_object_position.y = float(self.tm_gdrn.objects[idx].position[1])
@@ -245,7 +276,7 @@ class ReasonerTester():
     return deictic
 
   def get_gdrn_output(self):
-    # currently gdrn from zmq
+    # Creates GDRNSolution from ZeroMQ dict representation
     context = zmq.Context()
     self.socket = context.socket(zmq.SUB)
     self.socket.connect("tcp://localhost:5557")
@@ -274,22 +305,22 @@ class ReasonerTester():
         self.node.get_logger().error("[Tester] Received msg_str is not list")
     except:      
       self.node.get_logger().error(
-        "[Tester] Error in receiving msg from gdrn ROS1"
-        )
+        "[Tester] Error in receiving msg from gdrn ROS1")
     return gdrn
 
   def get_nlp_output(self):
+    # Gets HRICommand from NLP, currently dummy input
     nlp = HRICommand()
-    a_param = self.test if self.test in ["left", "right","color", "shape"] else "color"
+    # for testing a_p ~ action_param
+    a_p = self.test if self.test in ["left", "right", "shape", "color"] else ""
     test_dict = {
       "action": ["pick"],
       "objects": ["null"],
-      "action_param": [a_param],
+      "action_param": [a_p],
       "object_param": []
     }
+    # maybe necessary to config nlp.header.stamp and frame_id
     nlp.header = Header()
-    nlp.header.stamp = self.node.get_clock().now().to_msg()
-    nlp.header.frame_id = "testingr"
     nlp.data = [json.dumps(test_dict)]
 
     return nlp
