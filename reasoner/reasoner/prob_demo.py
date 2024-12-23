@@ -1,6 +1,5 @@
 """
 Simple demo of how the end probability of target object is calculated.
-
 """
 import numpy as np
 
@@ -72,7 +71,11 @@ def evaluate_reference(objects: list, ref: int):
         if obj["name"][:3] == name[:3]:
             d = np.linalg.norm(np.array(position)-np.array(obj["position"]))
             # print(d)
-            distances_from_target.append(d)
+            if d != 0.0:
+                d_prob = np.exp(-(d**2) / (2 * 2.0**2))
+            else:
+                d_prob = d
+            distances_from_target.append(d_prob)
         else:
             distances_from_target.append(0.0)
     dist_sum = np.sum(distances_from_target)
