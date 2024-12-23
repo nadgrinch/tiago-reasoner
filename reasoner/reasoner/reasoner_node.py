@@ -260,7 +260,7 @@ class Reasoner(Node):
           ret.append(obj)
       return ret
     
-    def evaluate_objects(objects: list):
+    def evaluate_objects(objects: list, sigma=self.sigma):
       # returns prob list based on object distance to robot
       unnormalized = []
       for obj in objects:
@@ -271,7 +271,7 @@ class Reasoner(Node):
       return list(ret)
     
     language_objects = find_objects(self.gdrn_objects, self.lang_objects[0])
-    probs = evaluate_objects(language_objects)
+    probs = evaluate_objects(language_objects,sigma=2.0)
     return probs
 
   def publish_results(self):
