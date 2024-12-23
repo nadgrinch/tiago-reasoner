@@ -38,7 +38,7 @@ demo_objects = [
 ]
 
 # Demo for probability calculations
-human_vector = [1.2,-0.3,0.63] # banana 1
+human_vector = [1.1,-0.3,0.63] # banana 1
 action_param = "left"
 print(f"Human is poiting at {human_vector[:2]} and action param: {action_param}")
 
@@ -112,7 +112,7 @@ def evaluate_reference(objects: list, ref_idx: int):
         # return list of probabilities for related objects of reference object
         ref = objects[ref_idx]
         dist_to_ref = []
-        # firstly we calculate 1/distances to reference object
+        # firstly we fill probs list with distances for related objects
         for i in range(len(objects)):
             obj = objects[i]
             # print(ref_obj["name"],obj["name"])
@@ -126,7 +126,7 @@ def evaluate_reference(objects: list, ref_idx: int):
         
         # compute prob from distances
         ref_probs = []
-        if np.sum(dist_to_ref) != 0.0:
+        if sum(dist_to_ref) != 0.0:
             ref_probs = np.array(dist_to_ref) / np.sum(dist_to_ref)
         else:
             ref_probs = np.zeros(len(objects))
@@ -140,7 +140,7 @@ def evaluate_objects(objects: list, vector: list):
     distances_from_vector = calculate_distances(objects, vector)
     print("distances from human vector")
     print_array(distances_from_vector)
-    dist_prob = evaluate_distances(distances_from_vector,sigma=0.2)
+    dist_prob = evaluate_distances(distances_from_vector,sigma=0.3)
     print_array(dist_prob)
     print("---")
 
