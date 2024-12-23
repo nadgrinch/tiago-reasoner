@@ -9,37 +9,87 @@ demo_objects = [
         "name":"011_banana_1",
         "color": "yellow",
         "confidence": 0.9,
-        "position": [3,3,1]
+        "position": [1.1,-0.3,0.6]
     },
     {
         "name":"010_apple_1",
         "color": "red",
         "confidence": 0.9,
-        "position": [4,8,1]
+        "position": [1.4,0.2,0.6]
     },
     {
         "name":"011_banana_2",
         "color": "yellow",
         "confidence": 0.9,
-        "position": [9,7,1]
+        "position": [1.05,0.1,0.6]
     },
     {
-        "name":"011_banana_3",
+        "name":"006_lemon_1",
         "color": "yellow",
         "confidence": 0.9,
-        "position": [9,3,1]
+        "position": [1.5,-0.2,0.6]
     },
     {
-        "name":"010_apple_2",
+        "name":"003_tomato_sauce_1",
         "color": "red",
         "confidence": 0.9,
-        "position": [11,3,1]
+        "position": [1.2,0.0,0.6544]
     },
 ]
-max_x = 14
-max_y = 10
+
+# Demo for probability calculations
+human_vector = [1.2,-0.3,0.63] # banana 1
+action_param = "left"
+print(f"Human is poiting at {human_vector[:2]} and action param: {action_param}")
+
 
 # Functions for demo
+def meet_ref_criteria(ref: dict, obj: dict, tolerance=0.01):
+    # return True if given object meets filter criteria of reference
+    def check_shape(ref: dict, obj: dict) -> bool:
+        ref_num = int(ref["name"][:3])
+        obj_num = int(obj["name"][:3])
+        return ref_num == obj_num
+    
+    def check_color(ref: dict, obj: dict) -> bool:
+        ret = False
+        if type(ref["color"]) == str and type(obj["color"]) == str:
+            ret = (ref["color"] == obj["color"])
+        elif type(ref["color"]) == list and type(obj["color"]) == str:
+            ret = (obj["color"] in ref["color"])
+        elif type(ref["color"]) == str and type(obj["color"]) == list:
+            ret = (ref["color"] in obj["color"])
+        elif type(ref["color"]) == list and type(obj["color"]) == list:
+            for ref_color in ref["color"]:
+                if ref_color in obj["color"]:
+                    ret = True
+        return ret
+    
+    ret = False
+    if (action_param == "color" and check_color(ref,obj)):
+        ret = True
+    elif (action_param == "shape" and check_shape(ref,obj)):
+        ret = True
+    elif action_param in ["left", "right"]:
+        dir_vector = human_vector[:2]
+        # print(f"Pointing vector: {dir_vector}")
+        ref_pos = ref["position"]
+        obj_pos = obj["position"]
+      
+        ref_to_pos = [obj_pos[0] - ref_pos[0], obj_pos[1] - ref_pos[1]]
+        dot_product = (
+          ref_to_pos[0] * -dir_vector[1] + 
+          ref_to_pos[1] * dir_vector[0] )
+
+        # print(f"{obj['name'] }, {obj['position'] },{dot_product}")
+        if action_param == "right" and dot_product < -tolerance:
+            ret = True
+        elif action_param == "left" and dot_product > tolerance:
+            ret = True
+    
+    # print(f"return: {ret}, ref, obj: {ref_num}, {obj_num}")
+    return ret
+
 def calculate_distances(objects: list, point: list):
     # returns list of distances of objects to point
     distances = []
@@ -58,52 +108,55 @@ def evaluate_distances(distances: list, sigma=0.4):
     normalized_p = unnormalized_p / np.sum(unnormalized_p)
     return normalized_p
 
-def evaluate_reference(objects: list, ref: int):
-    # return list of normalized sum of distance probabilities
-    # distances of object to target object
-    position = objects[ref]["position"]
-    name = objects[ref]["name"]
-
-    distances_from_target = []
-    for i in range(len(objects)):
-        obj = objects[i]
-        # print(obj["name"][:3], name[:3], obj["name"][:3] == name[:3])
-        if obj["name"][:3] == name[:3]:
-            d = np.linalg.norm(np.array(position)-np.array(obj["position"]))
-            # print(d)
-            if d != 0.0:
-                d_prob = np.exp(-(d**2) / (2 * 2.0**2))
+def evaluate_reference(objects: list, ref_idx: int):
+        # return list of probabilities for related objects of reference object
+        ref = objects[ref_idx]
+        dist_to_ref = []
+        # firstly we calculate 1/distances to reference object
+        for i in range(len(objects)):
+            obj = objects[i]
+            # print(ref_obj["name"],obj["name"])
+            if meet_ref_criteria(ref,obj):
+                dist = np.linalg.norm(
+                    np.array(obj["position"]) - np.array(ref["position"]) )
+                dist_to_ref.append(1/dist)
             else:
-                d_prob = d
-            distances_from_target.append(d_prob)
+                # for later sum unrelated objects needs to equal zero
+                dist_to_ref.append(0.0)
+        
+        # compute prob from distances
+        ref_probs = []
+        if np.sum(dist_to_ref) != 0.0:
+            ref_probs = np.array(dist_to_ref) / np.sum(dist_to_ref)
         else:
-            distances_from_target.append(0.0)
-    dist_sum = np.sum(distances_from_target)
-    for j in range(len(distances_from_target)):
-        value = distances_from_target[j]
-        if value == 0.0:
-            distances_from_target[j] = 0.0
-        elif value == dist_sum:
-            distances_from_target[j] = 1.0
-        else:
-            # normalized and inversed (closer -> bigger)
-            distances_from_target[j] = (dist_sum - value) / dist_sum
-    return distances_from_target
+            ref_probs = np.zeros(len(objects))
+        
+        print(ref["name"])
+        print_array(dist_to_ref)
+        return list(ref_probs)
         
 def evaluate_objects(objects: list, vector: list):
     # return output probabilities from human vector
     distances_from_vector = calculate_distances(objects, vector)
-    dist_prob = evaluate_distances(distances_from_vector,sigma=2.0)
+    print("distances from human vector")
+    print_array(distances_from_vector)
+    dist_prob = evaluate_distances(distances_from_vector,sigma=0.2)
+    print_array(dist_prob)
+    print("---")
 
     rows = []
     for idx in range(len(objects)):
         row = evaluate_reference(objects,idx)
+        print_array(row)
+        print("-")
         rows.append(list(dist_prob[idx]*objects[idx]["confidence"]*np.array(row)))
         # rows.append(row)
     
     prob_matrix = np.array(rows)
-    # print(prob_matrix)
+    # print_matrix(prob_matrix)
     ret = np.sum(prob_matrix,axis=0)
+    # print_array(ret)
+    # print()
     norm = np.sum(ret)
     return ret / norm
 
@@ -118,19 +171,27 @@ def print_array(array):
             print("%.3f" % number,end="")
     print()
 
-# Demo for probability calculations
-rnd_vector = np.random.rand(2)
-# human_vector = [int(rnd_vector[0]*max_x), int(rnd_vector[1]*max_y), 1]
-human_vector = [10,5,1]
-print(f"Human is poiting at {human_vector[:2]}")
-
-distances_from_human = calculate_distances(demo_objects, human_vector)
-# print_array(distances_from_human)
-dist_probs = evaluate_distances(distances_from_human,sigma=2.0)
-# print_array(dist_probs)
-
+def print_matrix(matrix):
+    for i in range(len(matrix)):
+        print("[",end="")
+        for j in range(len(matrix[0])):
+            if j == len(matrix[0]) - 1:
+                print(round(matrix[i][j],4), end="")
+            else:
+                print(round(matrix[i][j],4),end=", ")
+        print("]",end="\n")
+    
+#=================
 out_probs = evaluate_objects(demo_objects, human_vector)
+
+print("\n--- out")
 print_array(out_probs)
+for idx in range(len(demo_objects)):
+    if idx == len(demo_objects)-1:
+        print(demo_objects[idx]["name"][4:])
+    else:
+        print(demo_objects[idx]["name"][4:], end=" ")
+print()
 max_out = np.argmax(out_probs)
 print()
 print(demo_objects[max_out]["name"])

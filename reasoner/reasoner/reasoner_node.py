@@ -147,67 +147,50 @@ class Reasoner(Node):
     # print(f"return: {ret}, ref, obj: {ref_num}, {obj_num}")
     return ret
 
+  def evaluate_distances(self, distances: list, sigma=0.4):
+      # returns list of probabilities from distances
+      # distances to Gaussian distribution and normalized
+      unnormalized_p = []
+      for dist in distances:
+          prob = np.exp(-(dist**2) / (2 * sigma**2))
+          unnormalized_p.append(prob)
+      normalized_p = unnormalized_p / np.sum(unnormalized_p)
+      return list(normalized_p)
+  
+  def evaluate_reference(self, objects: list, ref_idx: int):
+    # return list of probabilities for related objects of reference object
+    ref = objects[ref_idx]
+    dist_to_ref = []
+    # firstly we calculate 1/distances to reference object
+    for i in range(len(objects)):
+      obj = objects[i]
+      if self.meet_ref_criteria(ref,obj):
+        dist = np.linalg.norm(
+          np.array(obj["position"]) - np.array(ref["position"]) )
+        dist_to_ref.append(1/dist)
+      else:
+        # for later sum unrelated objects needs to equal zero
+        dist_to_ref.append(0.0)
+        
+      # compute prob from distances
+      ref_probs = []
+      if np.sum(dist_to_ref) != 0.0:
+        ref_probs = np.array(dist_to_ref) / np.sum(dist_to_ref)
+      else:
+        ref_probs = list(np.zeros(len(objects)))
+        
+    return list(ref_probs)
+  
   def eval_pointing_param(self):
     """
     Calculates probabilities of target (GDRNet++) objects with reference
     from pointing input
     """
-    # demo_prob.py implementation
-    
-    def evaluate_distances(distances: list):
-      # returns list of probabilities from distances
-      # distances to Gaussian distribution and normalized
-      unnormalized_p = []
-      for dist in distances:
-          prob = np.exp(-(dist**2) / (2 * self.sigma**2))
-          unnormalized_p.append(prob)
-      normalized_p = list(unnormalized_p / np.sum(unnormalized_p))
-      return normalized_p
-
-    def evaluate_reference(objects: list, ref: int):
-      # return list of probabilities for related objects of reference
-      ref_obj = objects[ref]
-      target_probs = []
-      # firstly we fill probs list with distances for related objects
-      for i in range(len(objects)):
-        obj = objects[i]
-        # print(ref_obj["name"],obj["name"])
-        if self.meet_ref_criteria(ref_obj,obj):
-          d = np.linalg.norm(
-            np.array(obj["position"]) - np.array(ref_obj["position"]) )
-          # distance d ~ smaller better, Gaussian distribution
-          if d != 0.0:
-            d_prob = np.exp(-(d**2) / (2 * 2.0**2))
-          else:
-            d_prob = d
-          target_probs.append(d_prob)
-        else:
-          # for later sum unrelated objects needs to equal zero
-          target_probs.append(0.0)
-      
-      # compute prob from distances
-      dist_sum = np.sum(target_probs)
-      for j in range(len(target_probs)):
-        value = target_probs[j]
-        if value == 0.0:
-            target_probs[j] = 0.0
-        elif value == dist_sum:
-            target_probs[j] = 1.0
-        else:
-            # normalized and inversed (closer -> bigger)
-            target_probs[j] = (dist_sum - value) / dist_sum
-      return target_probs
-
-    dist_probs = evaluate_distances(self.deitic.distances_from_line)
+    dist_probs = self.evaluate_distances(self.deitic.distances_from_line)
     # print(f"[DEBUG] dist_probs: {dist_probs}")
-
-    # print(self.deitic.line_point_1.x - self.deitic.line_point_2.x,
-    #       self.deitic._line_point_1.y - self.deitic.line_point_2.y)
-
     rows = []
     for i in range(len(self.gdrn_objects)):
-      row = evaluate_reference(self.gdrn_objects,i)
-      # print(row)
+      row = self.evaluate_reference(self.gdrn_objects,i)
       rows.append(list(
         dist_probs[i] * self.gdrn_objects[i]["confidence"] * np.array(row) ))
     
@@ -220,18 +203,7 @@ class Reasoner(Node):
     """
     Calculates probabilty of target (GDRNet++) objects by their
     distance to pointing input
-    """ 
-    
-    def evaluate_distances(distances: list):
-      # returns list of probabilities from distances
-      # distances to Gaussian distribution and normalized
-      unnormalized_p = []
-      for dist in distances:
-          prob = np.exp(-(dist**2) / (2 * self.sigma**2))
-          unnormalized_p.append(prob)
-      normalized_p = list(unnormalized_p / np.sum(unnormalized_p))
-      return normalized_p
-    
+    """    
     def get_confidence_scores(objects: list):
       # return list of confidence score of given gdrn objects list
       scores = []
@@ -239,7 +211,7 @@ class Reasoner(Node):
         scores.append(obj["confidence"])
       return scores
     
-    probs = evaluate_distances(self.deitic.distances_from_line)
+    probs = self.evaluate_distances(self.deitic.distances_from_line)
     probs = np.array(probs) * np.array(get_confidence_scores(self.gdrn_objects))
     
     return list(probs)
@@ -249,50 +221,15 @@ class Reasoner(Node):
     Calculates probabilities of target (GDRNet++) objects with reference
     from language input
     """
-    
-    def find_indexes(objects: list, param: str):
-      # returns list of object's indexes from language
+    def find_indexes(objects: list, name: str):
+      # returns list of object's indexes from language with same name
       ret = []
       for i in range(len(objects)):
-        obj_name = objects[i]["name"][4:] # strip gdrnet type number
-        obj_name = re.match(r'^([^_]*)', obj_name).group(1) # strip index number
-        if obj_name == param:
+        # strip gdrnet type and index number
+        obj_name = re.match(r'^([^_]*)', objects[i]["name"][4:]).group(1)
+        if obj_name == name:
           ret.append(i)
       return ret
-    
-    def evaluate_reference(objects: list, ref: int):
-      # return list of probabilities for related objects of reference
-      ref_obj = objects[ref]
-
-      target_probs = []
-      # firstly we fill probs list with distances for related objects
-      for i in range(len(objects)):
-        obj = objects[i]
-        if self.meet_ref_criteria(obj,ref_obj):
-          d = np.linalg.norm(
-            np.array(ref_obj["position"]) - np.array(obj["position"]) )
-          # distance d ~ smaller better, Gaussian distribution
-          if d != 0.0:
-            d_prob = np.exp(-(d**2) / (2 * 2.0**2))
-          else:
-            d_prob = d
-          target_probs.append(d_prob)
-        else:
-          # for later sum unrelated objects needs to equal zero
-          target_probs.append(0.0)
-      
-      # compute prob from distances
-      dist_sum = np.sum(target_probs)
-      for j in range(len(target_probs)):
-        value = target_probs[j]
-        if value == 0.0:
-            target_probs[j] = 0.0
-        elif value == dist_sum:
-            target_probs[j] = 1.0
-        else:
-            # normalized and inversed (closer -> bigger)
-            target_probs[j] = (dist_sum - value) / dist_sum
-      return target_probs
     
     target = self.lang_objects[0] # first target object from language
     # print(target)
@@ -301,7 +238,7 @@ class Reasoner(Node):
     
     rows = []
     for i in indexes:
-      row = evaluate_reference(self.gdrn_objects,i)
+      row = self.evaluate_reference(self.gdrn_objects,i)
       rows.append(list(
         prob * self.gdrn_objects[i]["confidence"] * np.array(row) ))
     
@@ -313,13 +250,13 @@ class Reasoner(Node):
     """
     Calculates probabilty of target (GDRNet++) objects by their
     """
-    def find_objects(objects: list, param: str):
-      # returns list of object's indexes from language
+    def find_objects(objects: list, name: str):
+      # returns list of objects from language with same name
       ret = []
       for obj in objects:
         # strip gdrnet type number and index number
         obj_name = re.match(r'^([^_]*)', obj["name"][4:]).group(1)
-        if obj_name == param:
+        if obj_name == name:
           ret.append(obj)
       return ret
     
