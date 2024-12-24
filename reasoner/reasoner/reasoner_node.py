@@ -248,31 +248,18 @@ class Reasoner(Node):
   
   def eval_language(self):
     """
-    Calculates probabilty of target (GDRNet++) objects by their
+    Calculates probabilty of target (GDRNet++) objects by their distance 
+    to robot if they are same object type as from NLP
     """
-    def find_objects(objects: list, name: str):
-      # returns list of objects from language with same name
-      ret = []
-      for obj in objects:
-        # strip gdrnet type number and index number
-        obj_name = re.match(r'^([^_]*)', obj["name"][4:]).group(1)
-        if obj_name == name:
-          ret.append(obj)
-      return ret
+    ret = []
+    for obj in self.gdrn_objects:
+      obj_name = obj_name = re.match(r'^([^_]*)', obj["name"][4:]).group(1)
+      if obj_name in self.lang_objects:
+        ret.append(np.linalg.norm(obj["position"]))
+      else:
+        ret.append(0.0)
     
-    def evaluate_objects(objects: list, sigma=self.sigma):
-      # returns prob list based on object distance to robot
-      unnormalized = []
-      for obj in objects:
-        dist = np.linalg.norm(obj["position"])
-        prob = np.exp(-(dist**2) / (2 * self.sigma**2))
-        unnormalized.append(prob)
-      ret = unnormalized / np.sum(unnormalized)
-      return list(ret)
-    
-    language_objects = find_objects(self.gdrn_objects, self.lang_objects[0])
-    probs = evaluate_objects(language_objects,sigma=2.0)
-    return probs
+    return ret
 
   def publish_results(self):
     """
